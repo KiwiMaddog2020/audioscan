@@ -12,8 +12,9 @@ use std::io::{self, BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
-use audioscan::{Analysis, ScanConfig, ScanError, analyze_path};
+use audioscan::{Analysis, SCHEMA_VERSION, ScanConfig, ScanError, analyze_path};
 use rayon::prelude::*;
 use serde_json::json;
 
@@ -21,6 +22,26 @@ const USAGE: &str = "\
 usage:
   audioscan [--compact] [--strict] [--threshold <dB>] [--min-gap <s>] <file>
   audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <dB>] [--min-gap <s>]";
+
+const HELP: &str = "\
+audioscan — decode an audio file once and report loudness, silence, and format as JSON.
+
+USAGE:
+  audioscan [FLAGS] <file>
+  audioscan batch <dir> [FLAGS]
+
+FLAGS:
+  --compact          one-line JSON (single-file default is pretty; batch is always compact)
+  --pretty           pretty-printed JSON (single-file only)
+  --strict           exit non-zero instead of a \"partial\" result on an incomplete decode
+  --threshold <dB>   silence threshold in dBFS (default -30)
+  --min-gap <s>      shortest silence to report, in seconds (default 5.0)
+  -h, --help         print this help
+  -V, --version      print version
+
+BATCH FLAGS:
+  --out <file>       write JSON Lines to a file (default: stdout)
+  --jobs auto|<N>    parallel worker count (default: auto = cpu cores)";
 
 const AUDIO_EXTS: &[&str] = &[
     "wav", "wave", "mp3", "m4a", "mp4", "aac", "flac", "ogg", "oga", "aif", "aiff", "mka", "opus",
@@ -71,7 +92,7 @@ fn cmd_single(args: &[String]) -> ExitCode {
                 Err(e) => return usage_err(&e),
             },
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{HELP}");
                 return ExitCode::SUCCESS;
             }
             "-V" | "--version" => {
@@ -126,6 +147,7 @@ fn cmd_single(args: &[String]) -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn cmd_batch(args: &[String]) -> ExitCode {
+    let started = Instant::now();
     let mut config = ScanConfig::default();
     let mut dir: Option<String> = None;
     let mut out: Option<String> = None;
@@ -157,7 +179,7 @@ fn cmd_batch(args: &[String]) -> ExitCode {
                 Err(e) => return usage_err(&e),
             },
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{HELP}");
                 return ExitCode::SUCCESS;
             }
             flag if flag.starts_with('-') => return usage_err(&format!("unknown flag: {flag}")),
@@ -189,10 +211,9 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         files
             .par_iter()
             .map(|p| {
-                let path_str = p.to_string_lossy().to_string();
                 // Isolate each file: a panic in one decode becomes an error row,
                 // never an aborted batch.
-                let result = catch_unwind(AssertUnwindSafe(|| analyze_path(&path_str, &config)))
+                let result = catch_unwind(AssertUnwindSafe(|| analyze_path(p, &config)))
                     .unwrap_or_else(|_| {
                         Err(ScanError::Decode("panicked while decoding".to_string()))
                     });
@@ -224,20 +245,25 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         None => Box::new(BufWriter::new(io::stdout())),
     };
 
-    let (mut ok, mut failed) = (0u64, 0u64);
+    let (mut ok, mut partial, mut failed) = (0u64, 0u64, 0u64);
     for (path, res) in &results {
         let path_str = path.to_string_lossy();
         let line = match res {
             Ok(analysis) => {
-                ok += 1;
+                if analysis.status == "partial" {
+                    partial += 1;
+                } else {
+                    ok += 1;
+                }
                 serde_json::to_string(analysis).unwrap_or_else(|e| {
-                    json!({"schema_version": 1, "path": path_str, "error": format!("serialize: {e}")})
+                    json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": format!("serialize: {e}")})
                         .to_string()
                 })
             }
             Err(e) => {
                 failed += 1;
-                json!({"schema_version": 1, "path": path_str, "error": e.to_string()}).to_string()
+                json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": e.to_string()})
+                    .to_string()
             }
         };
         if let Err(e) = writeln!(sink, "{line}") {
@@ -251,8 +277,9 @@ fn cmd_batch(args: &[String]) -> ExitCode {
     }
 
     eprintln!(
-        "audioscan: scanned {} file(s): {ok} ok, {failed} failed",
-        results.len()
+        "audioscan: scanned {} file(s): {ok} ok, {partial} partial, {failed} failed in {:.1}s",
+        results.len(),
+        started.elapsed().as_secs_f64()
     );
     ExitCode::SUCCESS
 }

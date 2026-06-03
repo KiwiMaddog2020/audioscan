@@ -236,7 +236,7 @@ fn pure_silence_reports_whole_file_window_and_null_loudness() {
 
     assert_common_wav_fields(&json, &path, 1, 6.25);
     assert_eq!(field(&json, "integrated_lufs"), &Value::Null);
-    assert!(number_field(&json, "loudness_range_lu").is_finite());
+    assert_eq!(field(&json, "loudness_range_lu"), &Value::Null);
     assert_eq!(field(&json, "true_peak_dbtp"), &Value::Null);
     let silences = array_field(&json, "silences");
     assert_eq!(silences.len(), 1);
@@ -260,7 +260,7 @@ fn short_file_exits_successfully_and_reports_duration() {
 
     assert_common_wav_fields(&json, &path, 1, duration as f64);
     assert_eq!(field(&json, "integrated_lufs"), &Value::Null);
-    assert!(number_field(&json, "loudness_range_lu").is_finite());
+    assert_eq!(field(&json, "loudness_range_lu"), &Value::Null);
     assert_finite_negative(&json, "true_peak_dbtp");
     assert!(array_field(&json, "silences").is_empty());
 }

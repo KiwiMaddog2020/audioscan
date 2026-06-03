@@ -2,8 +2,21 @@
 //! R128 loudness, and silence windows.
 //!
 //! The CLI (`src/main.rs`) is a thin wrapper over [`analyze_path`]. Library
-//! callers get a typed [`ScanError`] and a serializable [`Analysis`]; the binary
-//! maps the error to stderr plus an exit code.
+//! callers get a typed [`ScanError`] and a serializable [`Analysis`].
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use audioscan::{ScanConfig, analyze_path};
+//!
+//! let analysis = analyze_path("take.wav", &ScanConfig::default())?;
+//! println!("integrated loudness: {:?} LUFS", analysis.integrated_lufs);
+//! for [start, end] in &analysis.silences {
+//!     println!("silence {start}..{end}s");
+//! }
+//! # Ok::<(), audioscan::ScanError>(())
+//! ```
+#![deny(missing_docs)]
 
 use std::fs::File;
 use std::path::Path;
@@ -49,6 +62,10 @@ impl Default for ScanConfig {
 impl ScanConfig {
     /// Reject non-finite or out-of-range values before they reach the DSP or
     /// the JSON contract.
+    ///
+    /// # Errors
+    /// Returns [`ScanError::Config`] when `threshold_db` is not finite or
+    /// `min_gap_sec` is negative or not finite.
     pub fn validate(&self) -> Result<(), ScanError> {
         if !self.threshold_db.is_finite() {
             return Err(ScanError::Config(
@@ -67,51 +84,72 @@ impl ScanConfig {
 /// Typed errors a library caller can match on.
 #[derive(Debug, Error)]
 pub enum ScanError {
+    /// The input file could not be opened.
     #[error("could not open {path}: {source}")]
     Open {
+        /// The path that failed to open.
         path: String,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
+    /// The container format could not be determined.
     #[error("could not determine audio format: {0}")]
     Format(String),
+    /// The file has no default (decodable) audio track.
     #[error("file has no decodable audio track")]
     NoTrack,
+    /// No decoder is available for the track's codec.
     #[error("no decoder available for this codec")]
     NoDecoder,
+    /// The stream is missing required info (e.g. sample rate or channel layout).
     #[error("stream is missing its {0}")]
     MissingStreamInfo(&'static str),
+    /// Decoding failed, or the decode was incomplete under `strict`.
     #[error("decode failed: {0}")]
     Decode(String),
+    /// The configuration was invalid (see [`ScanConfig::validate`]).
     #[error("invalid config: {0}")]
     Config(String),
 }
 
-/// One analysis result. Field names are the JSON keys consumers read; loudness
-/// fields are `null` when a file is too short or quiet to measure.
+/// One analysis result. Field names are the JSON keys consumers read.
 #[derive(Debug, Serialize)]
 pub struct Analysis {
+    /// JSON schema version (see [`SCHEMA_VERSION`]).
     pub schema_version: u32,
+    /// The analysed file's path, as given.
     pub path: String,
+    /// Container / extension label (e.g. `"wav"`).
     pub container: String,
+    /// Codec short name (e.g. `"pcm_s16le"`, `"flac"`).
     pub codec: String,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: u32,
+    /// Bits per sample, when the codec reports it.
     pub bits_per_sample: Option<u32>,
+    /// Decoded duration in seconds.
     pub duration_sec: f64,
+    /// Integrated loudness (LUFS); `null` when too short or quiet to measure.
     pub integrated_lufs: Option<f64>,
+    /// Loudness range (LU); `null` together with `integrated_lufs`.
     pub loudness_range_lu: Option<f64>,
+    /// Maximum true peak across channels (dBTP); `null` on digital silence.
     pub true_peak_dbtp: Option<f64>,
+    /// The silence threshold used, in dBFS.
     pub silence_threshold_db: f64,
+    /// The minimum silence gap used, in seconds.
     pub silence_min_gap_sec: f64,
+    /// Silence windows as `[start_sec, end_sec]`.
     pub silences: Vec<[f64; 2]>,
-    /// `"ok"` for a clean decode, `"partial"` if packets were skipped or the
-    /// stream ended unexpectedly mid-decode.
+    /// `"ok"` for a clean decode, `"partial"` if anything in `warnings` fired.
     pub status: &'static str,
     /// Count of corrupt packets skipped during decode.
     pub skipped_packets: u32,
-    /// Human-readable diagnostics (truncation, skipped packets, early end).
-    /// Empty on a clean decode.
+    /// Human-readable diagnostics (truncation, skipped packets, early end,
+    /// mid-file layout change). Empty on a clean decode.
     pub warnings: Vec<String>,
 }
 
@@ -119,9 +157,8 @@ pub struct Analysis {
 /// samples across channels) and it emits `[start, end]` windows that stayed
 /// below the threshold for at least `min_gap` seconds. O(1) state.
 ///
-/// Using per-frame power *across all channels* (not a mono average) is the fix
-/// for the anti-phase bug: a stereo frame `[+1.0, -1.0]` has mean power 1.0, so
-/// full-scale out-of-phase audio is no longer misread as silence.
+/// Per-frame power across all channels (not a mono average) means anti-phase
+/// stereo is not misread as silence.
 struct SilenceTracker {
     sample_rate: f64,
     threshold_db: f64,
@@ -136,7 +173,7 @@ struct SilenceTracker {
 
 impl SilenceTracker {
     fn new(sample_rate: u32, threshold_db: f64, min_gap: f64) -> Self {
-        // ~30 ms analysis window, the granularity ffmpeg's silencedetect works at.
+        // ~30 ms analysis window, the granularity ffmpeg's silencedetect uses.
         let win = ((sample_rate as f64) * 0.030).max(1.0) as u64;
         Self {
             sample_rate: sample_rate as f64,
@@ -151,7 +188,6 @@ impl SilenceTracker {
         }
     }
 
-    /// `frame_power` is the mean of squared samples across channels for one frame.
     fn push(&mut self, frame_power: f64) {
         self.win_power_sum += frame_power;
         self.win_filled += 1;
@@ -200,17 +236,26 @@ impl SilenceTracker {
 }
 
 /// Decode `path` once and return its [`Analysis`].
-pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanError> {
+///
+/// # Errors
+/// Returns [`ScanError::Config`] for an invalid [`ScanConfig`],
+/// [`ScanError::Open`] if the file cannot be opened, [`ScanError::Format`] if
+/// the container is unrecognised, [`ScanError::NoTrack`] /
+/// [`ScanError::NoDecoder`] / [`ScanError::MissingStreamInfo`] for an
+/// undecodable stream, and [`ScanError::Decode`] on a decode failure or, under
+/// [`ScanConfig::strict`], any incomplete decode.
+pub fn analyze_path(path: impl AsRef<Path>, config: &ScanConfig) -> Result<Analysis, ScanError> {
     config.validate()?;
+    let path = path.as_ref();
 
     let file = File::open(path).map_err(|e| ScanError::Open {
-        path: path.to_string(),
+        path: path.display().to_string(),
         source: e,
     })?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
-    let container = Path::new(path)
+    let container = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
@@ -264,7 +309,8 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
     let mut buf_cap_frames: u64 = 0;
     let mut total_frames: u64 = 0;
     let mut skipped_packets: u32 = 0;
-    let mut partial = false;
+    let mut early_end = false;
+    let mut layout_changed: Option<(u32, u32)> = None;
     let ch = channels.max(1) as usize;
 
     loop {
@@ -272,7 +318,7 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
             Ok(p) => p,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(SymError::ResetRequired) => {
-                partial = true;
+                early_end = true;
                 break;
             }
             Err(e) => return Err(ScanError::Decode(format!("reading packet: {e}"))),
@@ -289,13 +335,22 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
                 continue;
             }
             Err(SymError::IoError(_)) => {
-                partial = true;
+                early_end = true;
                 break;
             }
             Err(e) => return Err(ScanError::Decode(format!("decoding: {e}"))),
         };
 
         let spec = *decoded.spec();
+        // The loudness + silence models were built for the header layout. A real
+        // mid-stream channel/rate change can't be fed to them correctly, and a
+        // wider packet would overflow the sample buffer's capacity assert, so
+        // flag it and stop rather than panic or mix layouts.
+        if spec.channels.count() as u32 != channels || spec.rate != sample_rate {
+            layout_changed = Some((spec.channels.count() as u32, spec.rate));
+            break;
+        }
+
         let frames = decoded.frames();
         let cap = decoded.capacity() as u64;
         if sample_buf.is_none() || frames as u64 > buf_cap_frames {
@@ -329,19 +384,28 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
         .ok()
         .filter(|v| v.is_finite())
         .map(round2);
-    let loudness_range_lu = ebu
-        .loudness_range()
-        .ok()
-        .filter(|v| v.is_finite())
-        .map(round2);
+    // Loudness range follows integrated loudness: ebur128 returns Ok(0.0) for an
+    // empty gating history, which would be a misleading 0.0 against a null
+    // integrated value, so gate it to None whenever integrated is None.
+    let loudness_range_lu = integrated_lufs.and_then(|_| {
+        ebu.loudness_range()
+            .ok()
+            .filter(|v| v.is_finite())
+            .map(round2)
+    });
     let true_peak_dbtp = max_true_peak(&ebu, channels);
 
     let mut warnings: Vec<String> = Vec::new();
     if skipped_packets > 0 {
         warnings.push(format!("skipped {skipped_packets} corrupt packet(s)"));
     }
-    if partial {
+    if early_end {
         warnings.push("decode ended early on a stream error".to_string());
+    }
+    if let Some((a, r)) = layout_changed {
+        warnings.push(format!(
+            "stream changed layout mid-file: {channels}ch/{sample_rate}Hz -> {a}ch/{r}Hz"
+        ));
     }
     // Truncation: decoded materially fewer frames than the container declared.
     if let Some(declared) = declared_frames
@@ -364,7 +428,7 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
 
     Ok(Analysis {
         schema_version: SCHEMA_VERSION,
-        path: path.to_string(),
+        path: path.display().to_string(),
         container,
         codec,
         sample_rate,
@@ -396,6 +460,8 @@ fn max_true_peak(ebu: &EbuR128, channels: u32) -> Option<f64> {
             }
         }
     }
+    // peak == 0.0 means digital silence (no inter-sample peak); report None by
+    // design rather than -inf or 0.0 dBTP.
     if measured && peak > 0.0 {
         let dbtp = 20.0 * peak.log10();
         dbtp.is_finite().then(|| round2(dbtp))
