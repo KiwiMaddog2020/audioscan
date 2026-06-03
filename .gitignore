@@ -1,0 +1,4 @@
+/target
+
+# Generated validation fixtures (regenerated via tools/make_signal.py)
+/samples
