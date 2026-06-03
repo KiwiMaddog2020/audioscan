@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use audioscan::SCHEMA_VERSION;
 use serde_json::Value;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -84,7 +85,10 @@ fn assert_finite_negative(json: &Value, name: &str) {
 }
 
 fn assert_common_wav_fields(json: &Value, path: &Path, channels: u64, duration_sec: f64) {
-    assert_eq!(field(json, "schema_version").as_u64(), Some(1));
+    assert_eq!(
+        field(json, "schema_version").as_u64(),
+        Some(u64::from(SCHEMA_VERSION))
+    );
     assert_eq!(field(json, "path").as_str(), Some(path.to_str().unwrap()));
     assert_eq!(field(json, "container").as_str(), Some("wav"));
     assert_eq!(field(json, "codec").as_str(), Some("pcm_s16le"));

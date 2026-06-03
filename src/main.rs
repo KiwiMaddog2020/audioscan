@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use audioscan::{Analysis, SCHEMA_VERSION, ScanConfig, ScanError, analyze_path};
+use audioscan::{Analysis, SCHEMA_VERSION, ScanConfig, ScanError, Status, analyze_path};
 use rayon::prelude::*;
 use serde_json::json;
 
@@ -250,7 +250,7 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         let path_str = path.to_string_lossy();
         let line = match res {
             Ok(analysis) => {
-                if analysis.status == "partial" {
+                if analysis.status == Status::Partial {
                     partial += 1;
                 } else {
                     ok += 1;

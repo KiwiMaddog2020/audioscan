@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use audioscan::{Analysis, SCHEMA_VERSION, Status};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use serde_json::Value;
 
@@ -172,9 +173,36 @@ fn clean_fixture_matches_full_json_contract() {
     let expected_fields = CONTRACT_FIELDS.into_iter().collect::<BTreeSet<_>>();
 
     assert_eq!(actual_fields, expected_fields);
-    assert_eq!(field(&json, "schema_version").as_u64(), Some(1));
+    assert_eq!(
+        field(&json, "schema_version").as_u64(),
+        Some(u64::from(SCHEMA_VERSION))
+    );
     assert_clean_ok(&json);
     assert_eq!(field(&json, "skipped_packets").as_u64(), Some(0));
+
+    // Value-level golden for the deterministic fixture (not just the key set).
+    assert_eq!(field(&json, "sample_rate").as_u64(), Some(48_000));
+    assert_eq!(field(&json, "channels").as_u64(), Some(1));
+    assert_eq!(field(&json, "container").as_str(), Some("wav"));
+    assert_eq!(field(&json, "codec").as_str(), Some("pcm_s16le"));
+    assert_eq!(field(&json, "bits_per_sample").as_u64(), Some(16));
+    assert_eq!(number_field(&json, "silence_threshold_db"), -30.0);
+    assert_eq!(number_field(&json, "silence_min_gap_sec"), 5.0);
+    assert_eq!(field(&json, "silences").as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn analysis_json_round_trips_through_the_public_type() {
+    let dir = FixtureDir::new("roundtrip");
+    let path = dir.path().join("clean_gap.wav");
+    write_clean_gap_wav(&path);
+
+    let output = audioscan_output(&path, false);
+    let analysis: Analysis =
+        serde_json::from_slice(&output.stdout).expect("Analysis deserializes from its own JSON");
+    assert_eq!(analysis.schema_version, SCHEMA_VERSION);
+    assert_eq!(analysis.status, Status::Ok);
+    assert_eq!(analysis.channels, 1);
 }
 
 #[test]

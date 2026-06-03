@@ -22,7 +22,7 @@ use std::fs::File;
 use std::path::Path;
 
 use ebur128::{EbuR128, Mode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymError;
@@ -83,6 +83,7 @@ impl ScanConfig {
 
 /// Typed errors a library caller can match on.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ScanError {
     /// The input file could not be opened.
     #[error("could not open {path}: {source}")]
@@ -113,8 +114,18 @@ pub enum ScanError {
     Config(String),
 }
 
+/// Decode outcome for an [`Analysis`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    /// A clean decode.
+    Ok,
+    /// The decode completed but with diagnostics (see [`Analysis::warnings`]).
+    Partial,
+}
+
 /// One analysis result. Field names are the JSON keys consumers read.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Analysis {
     /// JSON schema version (see [`SCHEMA_VERSION`]).
     pub schema_version: u32,
@@ -144,8 +155,9 @@ pub struct Analysis {
     pub silence_min_gap_sec: f64,
     /// Silence windows as `[start_sec, end_sec]`.
     pub silences: Vec<[f64; 2]>,
-    /// `"ok"` for a clean decode, `"partial"` if anything in `warnings` fired.
-    pub status: &'static str,
+    /// [`Status::Ok`] for a clean decode, [`Status::Partial`] if anything in
+    /// `warnings` fired.
+    pub status: Status,
     /// Count of corrupt packets skipped during decode.
     pub skipped_packets: u32,
     /// Human-readable diagnostics (truncation, skipped packets, early end,
@@ -417,7 +429,11 @@ pub fn analyze_path(path: impl AsRef<Path>, config: &ScanConfig) -> Result<Analy
             "truncated: decoded {duration_sec}s of {declared_sec}s declared"
         ));
     }
-    let status = if warnings.is_empty() { "ok" } else { "partial" };
+    let status = if warnings.is_empty() {
+        Status::Ok
+    } else {
+        Status::Partial
+    };
 
     if config.strict && !warnings.is_empty() {
         return Err(ScanError::Decode(format!(
