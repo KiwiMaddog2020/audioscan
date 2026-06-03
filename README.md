@@ -81,12 +81,15 @@ fail once the JSONL output has been written.
 skipping corrupt packets or detecting an incomplete stream. `warnings[]` holds
 human-readable diagnostics for partial output; it is empty for clean output.
 With `--strict`, partial decodes become errors instead of JSON analysis rows.
+`container` is the lowercased file extension from the input path, or `""` for an
+extensionless path.
 
-`integrated_lufs`, `loudness_range_lu`, and `true_peak_dbtp` are all `null`
-together when the input is too short or quiet to measure. `silences` uses the
-same `[start, end]` seconds convention Bootleg's `segments_from_silences`
-already consumes. Silence boundaries are quantized to the roughly 30 ms analysis
-window, matching ffmpeg `silencedetect`.
+`integrated_lufs` and `loudness_range_lu` are `null` together when the input is
+too short or quiet to measure. `true_peak_dbtp` is `null` only for digital
+silence, where there is no inter-sample peak to report. `silences` uses the same
+`[start, end]` seconds convention Bootleg's `segments_from_silences` already
+consumes. Silence boundaries are quantized to the roughly 30 ms analysis window,
+matching ffmpeg `silencedetect`.
 
 ## Validation
 

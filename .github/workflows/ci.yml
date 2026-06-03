@@ -6,7 +6,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,3 +28,21 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+      - name: Test doctests
+        run: cargo test --doc
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: cargo check

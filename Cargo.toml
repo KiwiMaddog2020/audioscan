@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/KiwiMaddog2020/audioscan"
 keywords = ["audio", "loudness", "ebu-r128", "silence", "cli"]
 categories = ["command-line-utilities", "multimedia::audio"]
+exclude = ["docs/", "tests/", "tools/", ".github/"]
 
 [dependencies]
 thiserror = "1.0"
