@@ -223,7 +223,12 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
         .format(
             &hint,
             mss,
-            &FormatOptions::default(),
+            &FormatOptions {
+                // Honour encoder delay/padding so MP3/AAC durations and silence
+                // offsets track the true media timeline.
+                enable_gapless: true,
+                ..Default::default()
+            },
             &MetadataOptions::default(),
         )
         .map_err(|e| ScanError::Format(e.to_string()))?;
