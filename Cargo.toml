@@ -11,3 +11,7 @@ serde_json = "1.0.150"
 # Default features already cover wav/flac/ogg/vorbis/pcm/adpcm; add the lossy
 # codecs Bootleg also ingests (mp3, aac/m4a via isomp4).
 symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4"] }
+
+[dev-dependencies]
+hound = "3"
+serde_json = "1.0.150"

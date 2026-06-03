@@ -13,6 +13,7 @@ name = "audioscan"
 version = "0.1.0"
 dependencies = [
  "ebur128",
+ "hound",
  "serde",
  "serde_json",
  "symphonia",
@@ -78,6 +79,12 @@ name = "extended"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af9673d8203fcb076b19dfd17e38b3d4ae9f44959416ea532ce72415a6020365"
+
+[[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
 
 [[package]]
 name = "itoa"
