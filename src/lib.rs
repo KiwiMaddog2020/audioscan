@@ -31,6 +31,9 @@ pub struct ScanConfig {
     pub threshold_db: f64,
     /// Shortest silence to report, in seconds (default 5.0).
     pub min_gap_sec: f64,
+    /// Return an `Err` instead of a `"partial"` result when the decode is
+    /// incomplete (corrupt packets, truncation, or an early stream end).
+    pub strict: bool,
 }
 
 impl Default for ScanConfig {
@@ -38,6 +41,7 @@ impl Default for ScanConfig {
         Self {
             threshold_db: -30.0,
             min_gap_sec: 5.0,
+            strict: false,
         }
     }
 }
@@ -106,6 +110,9 @@ pub struct Analysis {
     pub status: &'static str,
     /// Count of corrupt packets skipped during decode.
     pub skipped_packets: u32,
+    /// Human-readable diagnostics (truncation, skipped packets, early end).
+    /// Empty on a clean decode.
+    pub warnings: Vec<String>,
 }
 
 /// Streaming silence detector. Feed it per-frame mean power (mean of squared
@@ -234,6 +241,7 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
         .map(|c| c.count() as u32)
         .ok_or(ScanError::MissingStreamInfo("channel layout"))?;
     let bits_per_sample = params.bits_per_sample;
+    let declared_frames = params.n_frames;
     let codec = symphonia::default::get_codecs()
         .get_codec(params.codec)
         .map(|d| d.short_name.to_string())
@@ -322,11 +330,32 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
         .filter(|v| v.is_finite())
         .map(round2);
     let true_peak_dbtp = max_true_peak(&ebu, channels);
-    let status = if partial || skipped_packets > 0 {
-        "partial"
-    } else {
-        "ok"
-    };
+
+    let mut warnings: Vec<String> = Vec::new();
+    if skipped_packets > 0 {
+        warnings.push(format!("skipped {skipped_packets} corrupt packet(s)"));
+    }
+    if partial {
+        warnings.push("decode ended early on a stream error".to_string());
+    }
+    // Truncation: decoded materially fewer frames than the container declared.
+    if let Some(declared) = declared_frames
+        && declared > 0
+        && total_frames < declared.saturating_mul(99) / 100
+    {
+        let declared_sec = round3(declared as f64 / sample_rate as f64);
+        warnings.push(format!(
+            "truncated: decoded {duration_sec}s of {declared_sec}s declared"
+        ));
+    }
+    let status = if warnings.is_empty() { "ok" } else { "partial" };
+
+    if config.strict && !warnings.is_empty() {
+        return Err(ScanError::Decode(format!(
+            "incomplete decode (strict): {}",
+            warnings.join("; ")
+        )));
+    }
 
     Ok(Analysis {
         schema_version: SCHEMA_VERSION,
@@ -345,6 +374,7 @@ pub fn analyze_path(path: &str, config: &ScanConfig) -> Result<Analysis, ScanErr
         silences: silence.finish(),
         status,
         skipped_packets,
+        warnings,
     })
 }
 

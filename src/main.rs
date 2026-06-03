@@ -9,7 +9,8 @@ use std::process::ExitCode;
 
 use audioscan::{ScanConfig, analyze_path};
 
-const USAGE: &str = "usage: audioscan [--compact] [--threshold <dB>] [--min-gap <s>] <file>";
+const USAGE: &str =
+    "usage: audioscan [--compact] [--strict] [--threshold <dB>] [--min-gap <s>] <file>";
 
 struct CliArgs {
     path: String,
@@ -33,6 +34,7 @@ fn parse_args() -> Result<Parsed, String> {
         match arg.as_str() {
             "--compact" => pretty = false,
             "--pretty" => pretty = true,
+            "--strict" => config.strict = true,
             "--threshold" => {
                 let v = args.next().ok_or("--threshold needs a value (dB)")?;
                 config.threshold_db = v
