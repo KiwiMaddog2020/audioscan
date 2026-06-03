@@ -2,6 +2,12 @@
 name = "audioscan"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Fast CLI audio analysis for format metadata, EBU R128 loudness, and silence windows"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KiwiMaddog2020/audioscan"
+keywords = ["audio", "loudness", "ebu-r128", "silence", "cli"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [dependencies]
 thiserror = "1.0"

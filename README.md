@@ -22,17 +22,42 @@ cargo build --release      # binary at target/release/audioscan
 ## Use
 
 ```bash
-audioscan [--compact] [--threshold <dB>] [--min-gap <s>] <file>
+audioscan [--compact|--pretty] [--strict] [--threshold <dB>] [--min-gap <s>] <file>
 ```
 
-- `--compact` one-line JSON (default is pretty)
+- `--pretty` pretty-printed JSON (default)
+- `--compact` one-line JSON
+- `--strict` fail instead of returning `status: "partial"` when decode is incomplete
 - `--threshold` silence threshold in dB (default -30, Bootleg's tuned value)
 - `--min-gap` shortest silence to report, in seconds (default 5.0, Bootleg's value)
+
+### Batch
+
+```bash
+audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <dB>] [--min-gap <s>]
+```
+
+Batch mode recursively scans known audio extensions under `<dir>` and emits
+compact JSON Lines, one row per file. Without `--out`, rows are written to
+stdout. `--jobs auto` uses rayon's default worker count; `--jobs <N>` pins the
+batch to a fixed positive worker count.
+
+Successful rows are the same analysis object shown below. Per-file failures are
+written as `{"schema_version":1,"path":"...","error":"..."}`. Each file is
+isolated with panic capture, so a panic or decode failure for one recording
+becomes an error row instead of aborting the batch.
+
+Exit codes are `0` when the command completes and writes its requested output,
+`1` for fatal runtime failures such as unreadable output paths, no discovered
+audio files, or a failed single-file scan, and `2` for usage or invalid-config
+errors. Batch per-file error rows do not by themselves make the batch command
+fail once the JSONL output has been written.
 
 ## Output
 
 ```json
 {
+  "schema_version": 1,
   "path": "take.wav",
   "container": "wav",
   "codec": "pcm_s16le",
@@ -45,13 +70,23 @@ audioscan [--compact] [--threshold <dB>] [--min-gap <s>] <file>
   "true_peak_dbtp": -1.1,
   "silence_threshold_db": -30.0,
   "silence_min_gap_sec": 5.0,
-  "silences": [[6.0, 12.0]]
+  "silences": [[6.0, 12.0]],
+  "status": "ok",
+  "skipped_packets": 0,
+  "warnings": []
 }
 ```
 
-Loudness fields are `null` when a file is too short or quiet to measure.
-`silences` uses the same `[start, end]` seconds convention Bootleg's
-`segments_from_silences` already consumes.
+`status` is `ok` for a clean decode and `partial` when the scan completed after
+skipping corrupt packets or detecting an incomplete stream. `warnings[]` holds
+human-readable diagnostics for partial output; it is empty for clean output.
+With `--strict`, partial decodes become errors instead of JSON analysis rows.
+
+`integrated_lufs`, `loudness_range_lu`, and `true_peak_dbtp` are all `null`
+together when the input is too short or quiet to measure. `silences` uses the
+same `[start, end]` seconds convention Bootleg's `segments_from_silences`
+already consumes. Silence boundaries are quantized to the roughly 30 ms analysis
+window, matching ffmpeg `silencedetect`.
 
 ## Validation
 
@@ -93,6 +128,5 @@ a separate, gated change. Because the contract is "run a binary, read JSON," it
 fits Bootleg's "JSON adapters only, never Python imports" boundary cleanly.
 
 Candidate directions:
-- parallel batch mode (`rayon`) for the ~100 GB Zoom-archive import
 - a C ABI so `veranota` (Swift) can call the same core
 - bump `symphonia` to 0.6
