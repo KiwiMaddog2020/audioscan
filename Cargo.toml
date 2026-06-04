@@ -6,9 +6,15 @@ rust-version = "1.88"
 description = "Fast CLI audio analysis for format metadata, EBU R128 loudness, and silence windows"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KiwiMaddog2020/audioscan"
+homepage = "https://github.com/KiwiMaddog2020/audioscan"
+documentation = "https://docs.rs/audioscan"
+readme = "README.md"
 keywords = ["audio", "loudness", "ebu-r128", "silence", "cli"]
 categories = ["command-line-utilities", "multimedia::audio"]
 exclude = ["docs/", "tests/", "tools/", ".github/"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 thiserror = "1.0"

@@ -200,9 +200,38 @@ fn analysis_json_round_trips_through_the_public_type() {
     let output = audioscan_output(&path, false);
     let analysis: Analysis =
         serde_json::from_slice(&output.stdout).expect("Analysis deserializes from its own JSON");
-    assert_eq!(analysis.schema_version, SCHEMA_VERSION);
-    assert_eq!(analysis.status, Status::Ok);
-    assert_eq!(analysis.channels, 1);
+
+    // Exhaustive destructure: adding or removing an Analysis field makes this a
+    // compile error, so the JSON field contract cannot drift without a test update.
+    let Analysis {
+        schema_version,
+        path: _,
+        container: _,
+        codec: _,
+        sample_rate: _,
+        channels,
+        bits_per_sample: _,
+        duration_sec: _,
+        integrated_lufs: _,
+        loudness_range_lu: _,
+        true_peak_dbtp: _,
+        silence_threshold_db: _,
+        silence_min_gap_sec: _,
+        silences: _,
+        status,
+        skipped_packets: _,
+        warnings: _,
+    } = &analysis;
+
+    assert_eq!(*schema_version, SCHEMA_VERSION);
+    // Literal pin: a SCHEMA_VERSION bump is a breaking contract change and must
+    // fail loudly here (symbol-vs-symbol assertions elsewhere would silently pass).
+    assert_eq!(
+        *schema_version, 1,
+        "schema_version is pinned; a bump is a deliberate contract break"
+    );
+    assert_eq!(*status, Status::Ok);
+    assert_eq!(*channels, 1);
 }
 
 #[test]

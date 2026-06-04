@@ -22,19 +22,22 @@ cargo build --release      # binary at target/release/audioscan
 ## Use
 
 ```bash
-audioscan [--compact|--pretty] [--strict] [--threshold <dB>] [--min-gap <s>] <file>
+audioscan [--compact|--pretty] [--strict] [--threshold <RMS-dBFS>] [--min-gap <s>] <file>
 ```
 
 - `--pretty` pretty-printed JSON (default)
 - `--compact` one-line JSON
 - `--strict` fail instead of returning `status: "partial"` when decode is incomplete
-- `--threshold` silence threshold in dB (default -30, Bootleg's tuned value)
+- `--threshold` silence threshold in RMS dBFS (default -30, Bootleg's tuned value)
 - `--min-gap` shortest silence to report, in seconds (default 5.0, Bootleg's value)
+
+On success, single-file mode prints `audioscan: analyzed <path> in <N.NN>s`
+to stderr, so the JSON on stdout stays clean and pipeable.
 
 ### Batch
 
 ```bash
-audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <dB>] [--min-gap <s>]
+audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <RMS-dBFS>] [--min-gap <s>]
 ```
 
 Batch mode recursively scans known audio extensions under `<dir>` and emits
@@ -42,10 +45,26 @@ compact JSON Lines, one row per file. Without `--out`, rows are written to
 stdout. `--jobs auto` uses rayon's default worker count; `--jobs <N>` pins the
 batch to a fixed positive worker count.
 
-Successful rows are the same analysis object shown below. Per-file failures are
-written as `{"schema_version":1,"path":"...","error":"..."}`. Each file is
-isolated with panic capture, so a panic or decode failure for one recording
-becomes an error row instead of aborting the batch.
+Each batch JSONL row, success or error, also includes `"bytes": <input file
+size in bytes on disk>`, a deterministic per-row field for sorting or spotting
+large inputs. Successful rows contain the analysis object shown below plus
+`bytes`. Per-file failures are written as
+`{"schema_version":1,"path":"...","error":"...","bytes":1234}`. `bytes` is a
+batch-row-only operational field; the single-file output object below does not
+include it. Each file is isolated with panic capture, so a panic or decode
+failure for one recording becomes an error row instead of aborting the batch.
+
+Batch mode prints its summary and slowest-file timing report to stderr:
+
+```text
+audioscan: scanned 1234 file(s): 1200 ok, 30 partial, 4 failed in 12.3s
+audioscan: slowest: big.flac 3201ms (118.0 MB), long.wav 1980ms (90.2 MB), take.wav 64ms (8.1 MB)
+```
+
+The `slowest:` line lists the slowest files with each file's elapsed time in
+milliseconds and size.
+stdout JSON Lines stay byte-identical across `--jobs` counts, so per-file
+wall-clock timing lives on stderr instead of in the JSONL stream.
 
 Exit codes are `0` when the command completes and writes its requested output,
 `1` for fatal runtime failures such as unreadable output paths, no discovered
