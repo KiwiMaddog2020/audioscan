@@ -242,6 +242,12 @@ fn batch_stderr_reports_summary_and_slowest_timing() {
         stderr.contains("slowest:") && stderr.contains("ms"),
         "stderr should report the slowest files with per-file ms timing, got:\n{stderr}"
     );
+    // Live progress: a per-file breadcrumb streams as each file completes. With
+    // 4 files the atomic counter reaches [4/4] exactly once, regardless of order.
+    assert!(
+        stderr.contains("[4/4]"),
+        "stderr should stream a live per-file progress breadcrumb, got:\n{stderr}"
+    );
 }
 
 #[test]

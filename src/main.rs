@@ -12,6 +12,7 @@ use std::io::{self, BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use audioscan::{Analysis, SCHEMA_VERSION, ScanConfig, ScanError, Status, analyze_path};
@@ -21,8 +22,8 @@ use serde_json::json;
 
 const USAGE: &str = "\
 usage:
-  audioscan [--compact] [--strict] [--threshold <dB>] [--min-gap <s>] <file>
-  audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <dB>] [--min-gap <s>]";
+  audioscan [--compact] [--strict] [--threshold <dB>] [--min-gap <s>] [--timeout <s>] <file>
+  audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <dB>] [--min-gap <s>] [--timeout <s>]";
 
 const HELP: &str = "\
 audioscan — decode an audio file once and report loudness, silence, and format as JSON.
@@ -37,6 +38,7 @@ FLAGS:
   --strict           exit non-zero instead of a \"partial\" result on an incomplete decode
   --threshold <dB>   silence threshold in RMS dBFS (default -30)
   --min-gap <s>      shortest silence to report, in seconds (default 5.0)
+  --timeout <s>      per-file soft decode deadline in seconds (default: none)
   -h, --help         print this help
   -V, --version      print version
 
@@ -90,6 +92,10 @@ fn cmd_single(args: &[String]) -> ExitCode {
             },
             "--min-gap" => match parse_f64_flag(it.next(), "--min-gap") {
                 Ok(v) => config.min_gap_sec = v,
+                Err(e) => return usage_err(&e),
+            },
+            "--timeout" => match parse_f64_flag(it.next(), "--timeout") {
+                Ok(v) => config.max_decode_secs = Some(v),
                 Err(e) => return usage_err(&e),
             },
             "-h" | "--help" => {
@@ -165,6 +171,10 @@ struct BatchRow {
 /// Serializable batch JSONL row: the analysis fields, flattened, plus the
 /// deterministic per-file `bytes` telemetry. Flatten keeps the field order
 /// identical to the single-file object, with `bytes` appended last.
+///
+/// Serialize-only: a batch row is a superset of `Analysis` (the extra `bytes`
+/// key), so it is not meant to be deserialized back into `Analysis`, which is
+/// `deny_unknown_fields`. Parse the single-file output for that.
 #[derive(Serialize)]
 struct BatchRecord<'a> {
     #[serde(flatten)]
@@ -204,6 +214,10 @@ fn cmd_batch(args: &[String]) -> ExitCode {
                 Ok(v) => config.min_gap_sec = v,
                 Err(e) => return usage_err(&e),
             },
+            "--timeout" => match parse_f64_flag(it.next(), "--timeout") {
+                Ok(v) => config.max_decode_secs = Some(v),
+                Err(e) => return usage_err(&e),
+            },
             "-h" | "--help" => {
                 println!("{HELP}");
                 return ExitCode::SUCCESS;
@@ -233,6 +247,8 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
+    let total = files.len();
+    let done = AtomicUsize::new(0);
     let scan = || -> Vec<BatchRow> {
         files
             .par_iter()
@@ -245,10 +261,17 @@ fn cmd_batch(args: &[String]) -> ExitCode {
                     .unwrap_or_else(|_| {
                         Err(ScanError::Decode("panicked while decoding".to_string()))
                     });
+                let elapsed_ms = started.elapsed().as_millis();
+                // Live progress: stream a per-file breadcrumb to stderr as each
+                // file finishes, so a wedged or slow file is visible mid-run and
+                // the batch is not silent until every decode returns. stderr only,
+                // so stdout JSON Lines stay byte-identical across --jobs counts.
+                let k = done.fetch_add(1, Ordering::Relaxed) + 1;
+                eprintln!("audioscan: [{k}/{total}] {} ({elapsed_ms}ms)", p.display());
                 BatchRow {
                     path: p.clone(),
                     result,
-                    elapsed_ms: started.elapsed().as_millis(),
+                    elapsed_ms,
                     bytes,
                 }
             })

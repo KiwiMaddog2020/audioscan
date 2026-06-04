@@ -20,6 +20,7 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 use ebur128::{EbuR128, Mode};
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,10 @@ pub struct ScanConfig {
     /// Return an `Err` instead of a `"partial"` result when the decode is
     /// incomplete (corrupt packets, truncation, or an early stream end).
     pub strict: bool,
+    /// Optional per-file soft decode deadline in seconds. Checked cooperatively
+    /// between decoded packets, so a slow or wedged decode stops at the limit
+    /// rather than running unbounded. `None` (the default) means no timeout.
+    pub max_decode_secs: Option<f64>,
 }
 
 impl Default for ScanConfig {
@@ -62,6 +67,7 @@ impl Default for ScanConfig {
             threshold_db: -30.0,
             min_gap_sec: 5.0,
             strict: false,
+            max_decode_secs: None,
         }
     }
 }
@@ -71,8 +77,9 @@ impl ScanConfig {
     /// the JSON contract.
     ///
     /// # Errors
-    /// Returns [`ScanError::Config`] when `threshold_db` is not finite or
-    /// `min_gap_sec` is negative or not finite.
+    /// Returns [`ScanError::Config`] when `threshold_db` is not finite,
+    /// `min_gap_sec` is negative or not finite, or `max_decode_secs` is `Some`
+    /// but not a finite positive number.
     pub fn validate(&self) -> Result<(), ScanError> {
         if !self.threshold_db.is_finite() {
             return Err(ScanError::Config(
@@ -82,6 +89,13 @@ impl ScanConfig {
         if !self.min_gap_sec.is_finite() || self.min_gap_sec < 0.0 {
             return Err(ScanError::Config(
                 "min-gap must be a finite number >= 0".into(),
+            ));
+        }
+        if let Some(secs) = self.max_decode_secs
+            && (!secs.is_finite() || secs <= 0.0)
+        {
+            return Err(ScanError::Config(
+                "timeout must be a finite number > 0".into(),
             ));
         }
         Ok(())
@@ -330,10 +344,20 @@ pub fn analyze_path(path: impl AsRef<Path>, config: &ScanConfig) -> Result<Analy
     let mut total_frames: u64 = 0;
     let mut skipped_packets: u32 = 0;
     let mut early_end = false;
+    let mut timed_out = false;
     let mut layout_changed: Option<(u32, u32)> = None;
     let ch = channels.max(1) as usize;
+    let decode_started = Instant::now();
 
     loop {
+        // Cooperative soft deadline: a slow or wedged file stops at the limit
+        // between packets rather than decoding unbounded.
+        if let Some(limit) = config.max_decode_secs
+            && decode_started.elapsed().as_secs_f64() > limit
+        {
+            timed_out = true;
+            break;
+        }
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -421,6 +445,9 @@ pub fn analyze_path(path: impl AsRef<Path>, config: &ScanConfig) -> Result<Analy
     }
     if early_end {
         warnings.push("decode ended early on a stream error".to_string());
+    }
+    if timed_out && let Some(limit) = config.max_decode_secs {
+        warnings.push(format!("decode exceeded timeout of {limit}s"));
     }
     if let Some((a, r)) = layout_changed {
         warnings.push(format!(
