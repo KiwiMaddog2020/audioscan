@@ -36,11 +36,18 @@ use thiserror::Error;
 /// fields are additive and do not bump it.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// A decode that recovers at least this percentage of the container's declared
+/// frame count is treated as complete. The 1% slack absorbs containers that
+/// over-declare `n_frames` (encoder padding, VBR estimates) without emitting a
+/// false `"truncated"` warning.
+const MIN_DECODED_PERCENT: u64 = 99;
+
 /// Analysis configuration, separate from CLI and output-format concerns so the
 /// library has a clean input type.
 #[derive(Debug, Clone, Copy)]
 pub struct ScanConfig {
-    /// Silence threshold in dBFS (default -30.0).
+    /// Silence threshold in RMS dBFS, compared against each ~30 ms window's
+    /// root-mean-square level (default -30.0).
     pub threshold_db: f64,
     /// Shortest silence to report, in seconds (default 5.0).
     pub min_gap_sec: f64,
@@ -126,6 +133,7 @@ pub enum Status {
 
 /// One analysis result. Field names are the JSON keys consumers read.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Analysis {
     /// JSON schema version (see [`SCHEMA_VERSION`]).
     pub schema_version: u32,
@@ -149,7 +157,7 @@ pub struct Analysis {
     pub loudness_range_lu: Option<f64>,
     /// Maximum true peak across channels (dBTP); `null` on digital silence.
     pub true_peak_dbtp: Option<f64>,
-    /// The silence threshold used, in dBFS.
+    /// The silence threshold used, in RMS dBFS.
     pub silence_threshold_db: f64,
     /// The minimum silence gap used, in seconds.
     pub silence_min_gap_sec: f64,
@@ -422,7 +430,7 @@ pub fn analyze_path(path: impl AsRef<Path>, config: &ScanConfig) -> Result<Analy
     // Truncation: decoded materially fewer frames than the container declared.
     if let Some(declared) = declared_frames
         && declared > 0
-        && total_frames < declared.saturating_mul(99) / 100
+        && total_frames < declared.saturating_mul(MIN_DECODED_PERCENT) / 100
     {
         let declared_sec = round3(declared as f64 / sample_rate as f64);
         warnings.push(format!(

@@ -181,6 +181,22 @@ fn batch_writes_jsonl_for_success_error_and_partial_rows() {
     );
 
     assert_eq!(field(trunc, "status").as_str(), Some("partial"));
+
+    // Every row (success and error) carries the deterministic `bytes` telemetry.
+    for (row, label) in [
+        (a, "a.wav"),
+        (b, "b.wav"),
+        (bad, "bad.wav"),
+        (trunc, "trunc.wav"),
+    ] {
+        let bytes = field(row, "bytes")
+            .as_u64()
+            .unwrap_or_else(|| panic!("{label} row should carry a numeric bytes field"));
+        assert!(bytes > 0, "{label} bytes should be > 0");
+    }
+    // The two clean WAVs are real files larger than a bare 44-byte header.
+    assert!(field(a, "bytes").as_u64().unwrap() > 44);
+    assert!(field(b, "bytes").as_u64().unwrap() > 44);
 }
 
 #[test]
@@ -204,6 +220,27 @@ fn batch_stdout_is_identical_for_single_and_multi_job_runs() {
         "batch stdout should be byte-identical across job counts\n--jobs 1:\n{}\n--jobs 4:\n{}",
         String::from_utf8_lossy(&single.stdout),
         String::from_utf8_lossy(&multi.stdout)
+    );
+}
+
+#[test]
+fn batch_stderr_reports_summary_and_slowest_timing() {
+    let dir = create_batch_fixture("stderr-timing");
+
+    let output = audioscan_batch(dir.path())
+        .output()
+        .expect("run audioscan batch to stdout");
+    assert_success(&output, "batch stderr");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("scanned 4 file(s)"),
+        "stderr should summarize the run, got:\n{stderr}"
+    );
+    // Per-file timing is observable on stderr (stdout stays byte-deterministic).
+    assert!(
+        stderr.contains("slowest:") && stderr.contains("ms"),
+        "stderr should report the slowest files with per-file ms timing, got:\n{stderr}"
     );
 }
 

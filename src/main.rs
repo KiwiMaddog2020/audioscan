@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use audioscan::{Analysis, SCHEMA_VERSION, ScanConfig, ScanError, Status, analyze_path};
 use rayon::prelude::*;
+use serde::Serialize;
 use serde_json::json;
 
 const USAGE: &str = "\
@@ -34,7 +35,7 @@ FLAGS:
   --compact          one-line JSON (single-file default is pretty; batch is always compact)
   --pretty           pretty-printed JSON (single-file only)
   --strict           exit non-zero instead of a \"partial\" result on an incomplete decode
-  --threshold <dB>   silence threshold in dBFS (default -30)
+  --threshold <dB>   silence threshold in RMS dBFS (default -30)
   --min-gap <s>      shortest silence to report, in seconds (default 5.0)
   -h, --help         print this help
   -V, --version      print version
@@ -117,6 +118,7 @@ fn cmd_single(args: &[String]) -> ExitCode {
         None => return usage_err("no input file (usage: audioscan <file>)"),
     };
 
+    let started = Instant::now();
     match analyze_path(&path, &config) {
         Ok(analysis) => {
             let json = if pretty {
@@ -127,6 +129,10 @@ fn cmd_single(args: &[String]) -> ExitCode {
             match json {
                 Ok(s) => {
                     println!("{s}");
+                    eprintln!(
+                        "audioscan: analyzed {path} in {:.2}s",
+                        started.elapsed().as_secs_f64()
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -145,6 +151,26 @@ fn cmd_single(args: &[String]) -> ExitCode {
 // ---------------------------------------------------------------------------
 // Batch mode
 // ---------------------------------------------------------------------------
+
+/// One batch result: the analysis (or error) plus per-file telemetry. `bytes`
+/// is the input file's size on disk; `elapsed_ms` is the wall-clock time this
+/// file took to analyze, surfaced in the stderr diagnostics.
+struct BatchRow {
+    path: PathBuf,
+    result: Result<Analysis, ScanError>,
+    elapsed_ms: u128,
+    bytes: u64,
+}
+
+/// Serializable batch JSONL row: the analysis fields, flattened, plus the
+/// deterministic per-file `bytes` telemetry. Flatten keeps the field order
+/// identical to the single-file object, with `bytes` appended last.
+#[derive(Serialize)]
+struct BatchRecord<'a> {
+    #[serde(flatten)]
+    analysis: &'a Analysis,
+    bytes: u64,
+}
 
 fn cmd_batch(args: &[String]) -> ExitCode {
     let started = Instant::now();
@@ -207,17 +233,24 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let scan = || -> Vec<(PathBuf, Result<Analysis, ScanError>)> {
+    let scan = || -> Vec<BatchRow> {
         files
             .par_iter()
             .map(|p| {
+                let bytes = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                let started = Instant::now();
                 // Isolate each file: a panic in one decode becomes an error row,
                 // never an aborted batch.
                 let result = catch_unwind(AssertUnwindSafe(|| analyze_path(p, &config)))
                     .unwrap_or_else(|_| {
                         Err(ScanError::Decode("panicked while decoding".to_string()))
                     });
-                (p.clone(), result)
+                BatchRow {
+                    path: p.clone(),
+                    result,
+                    elapsed_ms: started.elapsed().as_millis(),
+                    bytes,
+                }
             })
             .collect()
     };
@@ -232,7 +265,7 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         },
         None => scan(),
     };
-    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results.sort_by(|a, b| a.path.cmp(&b.path));
 
     let mut sink: Box<dyn Write> = match &out {
         Some(p) => match File::create(p) {
@@ -246,23 +279,27 @@ fn cmd_batch(args: &[String]) -> ExitCode {
     };
 
     let (mut ok, mut partial, mut failed) = (0u64, 0u64, 0u64);
-    for (path, res) in &results {
-        let path_str = path.to_string_lossy();
-        let line = match res {
+    for row in &results {
+        let path_str = row.path.to_string_lossy();
+        let line = match &row.result {
             Ok(analysis) => {
                 if analysis.status == Status::Partial {
                     partial += 1;
                 } else {
                     ok += 1;
                 }
-                serde_json::to_string(analysis).unwrap_or_else(|e| {
-                    json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": format!("serialize: {e}")})
+                let record = BatchRecord {
+                    analysis,
+                    bytes: row.bytes,
+                };
+                serde_json::to_string(&record).unwrap_or_else(|e| {
+                    json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": format!("serialize: {e}"), "bytes": row.bytes})
                         .to_string()
                 })
             }
             Err(e) => {
                 failed += 1;
-                json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": e.to_string()})
+                json!({"schema_version": SCHEMA_VERSION, "path": path_str, "error": e.to_string(), "bytes": row.bytes})
                     .to_string()
             }
         };
@@ -281,7 +318,42 @@ fn cmd_batch(args: &[String]) -> ExitCode {
         results.len(),
         started.elapsed().as_secs_f64()
     );
+    eprintln!("audioscan: slowest: {}", slowest_report(&results));
     ExitCode::SUCCESS
+}
+
+/// Format the slowest few files for the batch stderr diagnostic, longest first,
+/// so a pathologically slow file in a large run is individually visible without
+/// scanning the JSON Lines. Per-file wall-clock timing stays on stderr because
+/// stdout is byte-deterministic across `--jobs` counts.
+fn slowest_report(results: &[BatchRow]) -> String {
+    let mut by_time: Vec<&BatchRow> = results.iter().collect();
+    by_time.sort_by_key(|r| std::cmp::Reverse(r.elapsed_ms));
+    by_time
+        .iter()
+        .take(3)
+        .map(|r| {
+            let name = r.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            format!("{name} {}ms ({})", r.elapsed_ms, human_bytes(r.bytes))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Compact human-readable byte size, e.g. `8.1 MB`.
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = n as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
 }
 
 /// Recursively collect files with a known audio extension under `dir`.
