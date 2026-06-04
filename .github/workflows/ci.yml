@@ -29,6 +29,9 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      - name: Test release
+        run: cargo test --release --all-targets
+
       - name: Test doctests
         run: cargo test --doc
 

@@ -22,14 +22,23 @@ cargo build --release      # binary at target/release/audioscan
 ## Use
 
 ```bash
-audioscan [--compact|--pretty] [--strict] [--threshold <RMS-dBFS>] [--min-gap <s>] <file>
+audioscan [--compact|--pretty] [--strict] [--timeout <s>] [--threshold <RMS-dBFS>] [--min-gap <s>] <file>
 ```
 
 - `--pretty` pretty-printed JSON (default)
 - `--compact` one-line JSON
 - `--strict` fail instead of returning `status: "partial"` when decode is incomplete
+- `--timeout` per-file soft decode deadline in seconds (default: none / unbounded)
 - `--threshold` silence threshold in RMS dBFS (default -30, Bootleg's tuned value)
 - `--min-gap` shortest silence to report, in seconds (default 5.0, Bootleg's value)
+
+`--timeout <secs>` bounds how long a single file may spend decoding. It is a
+cooperative soft deadline checked between packets, so a slow or wedged file
+stops at the limit instead of running unbounded. A timed-out file is reported as
+`status: "partial"` with a `decode exceeded timeout of <N>s` warning, or, under
+`--strict`, an error. The default is no timeout, so legitimately long recordings
+are never truncated unless you set one. In batch mode the deadline applies per
+file and the batch continues past a timed-out file.
 
 On success, single-file mode prints `audioscan: analyzed <path> in <N.NN>s`
 to stderr, so the JSON on stdout stays clean and pipeable.
@@ -37,7 +46,7 @@ to stderr, so the JSON on stdout stays clean and pipeable.
 ### Batch
 
 ```bash
-audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--threshold <RMS-dBFS>] [--min-gap <s>]
+audioscan batch <dir> [--out <file.jsonl>] [--jobs auto|<N>] [--strict] [--timeout <s>] [--threshold <RMS-dBFS>] [--min-gap <s>]
 ```
 
 Batch mode recursively scans known audio extensions under `<dir>` and emits
@@ -54,17 +63,22 @@ batch-row-only operational field; the single-file output object below does not
 include it. Each file is isolated with panic capture, so a panic or decode
 failure for one recording becomes an error row instead of aborting the batch.
 
-Batch mode prints its summary and slowest-file timing report to stderr:
+Batch mode prints a live per-file progress line to stderr as each file
+completes, followed by the summary and slowest-file timing report:
 
 ```text
-audioscan: scanned 1234 file(s): 1200 ok, 30 partial, 4 failed in 12.3s
-audioscan: slowest: big.flac 3201ms (118.0 MB), long.wav 1980ms (90.2 MB), take.wav 64ms (8.1 MB)
+audioscan: [3/2000] /archive/take_03.wav (1182ms)
+audioscan: scanned 2000 file(s): 1996 ok, 3 partial, 1 failed in 41.7s
+audioscan: slowest: big.flac 3201ms (118.0 MB), long.wav 1980ms (90.2 MB), take_03.wav 1182ms (44.1 MB)
 ```
 
+Because the breadcrumb streams as files finish, not just at the end, a wedged or
+slow file is visible live as the file with no completion line yet, and the run
+is not silent until the end.
 The `slowest:` line lists the slowest files with each file's elapsed time in
 milliseconds and size.
 stdout JSON Lines stay byte-identical across `--jobs` counts, so per-file
-wall-clock timing lives on stderr instead of in the JSONL stream.
+wall-clock timing and progress live on stderr instead of in the JSONL stream.
 
 Exit codes are `0` when the command completes and writes its requested output,
 `1` for fatal runtime failures such as unreadable output paths, no discovered
@@ -97,8 +111,9 @@ fail once the JSONL output has been written.
 ```
 
 `status` is `ok` for a clean decode and `partial` when the scan completed after
-skipping corrupt packets or detecting an incomplete stream. `warnings[]` holds
-human-readable diagnostics for partial output; it is empty for clean output.
+skipping corrupt packets, detecting an incomplete stream, or exceeding a
+configured timeout. `warnings[]` holds human-readable diagnostics for partial
+output; it is empty for clean output.
 With `--strict`, partial decodes become errors instead of JSON analysis rows.
 `container` is the lowercased file extension from the input path, or `""` for an
 extensionless path.
