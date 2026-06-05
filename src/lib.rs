@@ -18,6 +18,8 @@
 //! ```
 #![deny(missing_docs)]
 
+pub mod ffi;
+
 use std::fs::File;
 use std::path::Path;
 use std::time::Instant;
