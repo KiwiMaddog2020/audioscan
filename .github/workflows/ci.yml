@@ -20,6 +20,12 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Install ffmpeg (Linux)
+        # The golden-loudness test cross-checks against ffmpeg's ebur128 and
+        # skips when ffmpeg is absent; install it on Linux so it actually runs.
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -34,6 +40,15 @@ jobs:
 
       - name: Test doctests
         run: cargo test --doc
+
+      - name: C API smoke (Linux)
+        # Build the capi feature (cbindgen regenerates the header), then compile
+        # and run the C example against the cdylib end to end.
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo build --features capi
+          cc examples/c_api.c -Iinclude -Ltarget/debug -laudioscan -o /tmp/c_api_demo
+          LD_LIBRARY_PATH=target/debug /tmp/c_api_demo tests/fixtures/tone_1khz_1s.flac
 
   msrv:
     runs-on: ubuntu-latest
