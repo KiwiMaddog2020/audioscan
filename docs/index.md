@@ -5,16 +5,16 @@ date: 2026-06-12
 
 # Audioscan: one decode pass instead of three ffmpeg shellouts
 
-<p class="dek">What writing my first real Rust tool taught me about audio, calling code across languages, and trusting your own numbers.</p>
+<p class="dek">My first real Rust tool, and what it taught me about audio measurement, calling code across a language boundary, and refusing to trust a number I had not checked.</p>
 
 <p class="meta">Kevin Madson · June 2026 · 5 min read</p>
 
 > **If someone forwarded this to you:** I mix and master music, and I build
-> software with AI agents on the side. Audioscan is a small, fast program that
-> fell out of one of those projects. It reads an audio file once and reports its
-> format, its loudness, and where the silent gaps are, as clean structured data.
-> It is also the first real thing I have written in Rust, a language built for
-> exactly this kind of fast, careful systems work.
+> software with AI agents on the side. Audioscan fell out of one of those
+> projects. It reads an audio file once and reports its format, its loudness, and
+> where the silent gaps are, as clean structured data. It is also the first real
+> thing I have shipped in Rust, a language built for exactly this kind of fast,
+> careful systems work.
 
 <p class="contact-card">
 <a href="https://github.com/KiwiMaddog2020/audioscan">github.com/KiwiMaddog2020/audioscan</a>
@@ -24,31 +24,32 @@ date: 2026-06-12
 
 ---
 
-## The problem: reading numbers out of another tool's status text
+## Reading numbers out of another tool's status text
 
 I mix and master music, and one of my projects is a private catalog of the
-recordings I work on. It needs two boring things from every take: how loud it is
-(so tracks sit at a consistent volume instead of jumping around), and where the
-silent gaps are (so it can split a long recording into separate songs).
+recordings I work on. It needs two unglamorous things from every take: how loud it
+is, so tracks sit at a consistent level instead of jumping around, and where the
+silent gaps fall, so it can split a long session into separate songs.
 
-The first version got both by running ffmpeg, the standard audio command-line
-tool, and reading the numbers out of the status text it prints while it works.
-That has two problems. To get a number, the file has to be fully unpacked from its
-compressed form into raw sound, and doing it this way unpacked each take two or
-three times over. Worse, scraping numbers out of a tool's chatter is fragile in a
-way that bites: my scraper once grabbed an early, meaningless reading from the
-start of a track instead of the real summary printed at the end, so the catalog was
-occasionally storing a loudness off by tens of decibels. I patched the scraper, but
-it was a patch on a method that was always going to find a new way to fail.
+The first version got both by shelling out to ffmpeg and scraping the numbers from
+the progress text it prints while it runs. Two things were wrong with that. To
+produce any measurement at all, the file has to be decoded from its compressed form
+into raw PCM samples, and this approach decoded each take two or three separate
+times. The second problem was worse, and it bit. The ebur128 meter prints a final
+integrated summary at the end of the stream; my scraper once latched onto an
+early, transient reading from the opening of a track instead, so the catalog
+quietly stored a loudness off by tens of decibels. I patched the regex. But a patch
+on a scrape-the-chatter method only buys time until the chatter changes shape
+again.
 
-## The fix: unpack once, measure everything
+## Decode once, measure everything
 
-Audioscan unpacks each file a single time (using a Rust audio library called
-[symphonia](https://github.com/pdeljanov/Symphonia)), measures loudness with the
-real [ebur128](https://crates.io/crates/ebur128) library (the same math ffmpeg
-uses, built to the EBU R128 standard that streaming services use to keep volume
-consistent), finds the silent gaps in that same pass, and prints clean structured
-data. Same numbers, fewer passes, nothing to scrape:
+Audioscan decodes each file exactly once, using the Rust audio library
+[symphonia](https://github.com/pdeljanov/Symphonia), and measures loudness with the
+real [ebur128](https://crates.io/crates/ebur128) crate. That is the same math
+ffmpeg runs under the hood, built to the EBU R128 standard streaming services use
+to keep playback level steady. In that same pass it finds the silent gaps and
+emits structured data:
 
 ```json
 {
@@ -60,16 +61,16 @@ data. Same numbers, fewer passes, nothing to scrape:
 }
 ```
 
-The single pass is the whole point. As the file is unpacked, the same stream of
-sound feeds the loudness meter and a running check for when it drops to near
-silence. One read of the file produces both answers, and because the output is
-clean data, the catalog just runs the program and reads its output instead of
-parsing prose.
+The single pass is the design. As samples come off the decoder, the same stream
+feeds the loudness meter and a running test for when amplitude drops below the
+silence threshold. One read, two answers. And because the output is data rather
+than prose, the catalog runs the program and reads its result. Same numbers. Fewer
+passes. Nothing to scrape.
 
 ## Trusting the numbers
 
-You cannot claim "same numbers" without checking, so I did, against ffmpeg's own
-loudness measurement on test signals:
+You cannot claim "same numbers" without proving it, so I checked, against ffmpeg's
+own loudness measurement on synthetic test signals:
 
 | signal | metric | Audioscan | ffmpeg |
 | --- | --- | --- | --- |
@@ -78,62 +79,64 @@ loudness measurement on test signals:
 | five tones at varied levels | loudness | -9.46 LUFS | -9.5 LUFS |
 | | loudness range | 11.0 LU | 11.0 LU |
 
-The whole table reproduces from the repo with three commands. And one honest
-caveat made it into the README rather than getting buried: the loudness-range
-number only agrees when the signal has real variation. On a flat two-level test
-tone, the statistics that number depends on are shaky in both tools, and they
-disagree. That is expected, not a bug, so the README says exactly that. A
-validation table that only shows the rows that agree is not a validation table.
+The whole table reproduces from the repo in three commands. One caveat went into
+the README instead of getting buried: loudness range (LRA, the spread between the
+quiet and loud passages of a track) only agrees when the signal actually varies. On
+a flat two-level test tone, the gating statistics that LRA depends on are unstable
+in both tools, and the two disagree. That is expected, not a bug, and the README
+says so plainly. A validation table that shows only the rows that agree is not a
+validation table.
 
-## What writing my first real Rust tool taught me
+## What the first real Rust tool taught me
 
-I came to this from Python, JavaScript, and Swift, so a few things were new.
+I came to this from Python, JavaScript, and Swift. A few things were genuinely new.
 
-**Letting other languages call it was the surprising part.** Audioscan can be
-used not just as a standalone program but as a library that code in other
-languages can call directly, without launching it as a separate process, which is
-how I will eventually wire it into a Mac app. Setting that up cost me an afternoon
-to one nasty gotcha: a version mismatch between Rust and the tool that generates
-the bridge for other languages silently produced an empty bridge, with none of the
-functions in it. A one-line version bump fixed it. I only caught it because the
-generated file was blank where it should have listed three functions, which is the
-kind of failure that passes every test right up until someone tries to use the
-thing.
+**The language boundary was the surprising part.** Audioscan works as a standalone
+program and as a library other languages can link against directly, through a C ABI
+generated by cbindgen, with no separate process to launch. That is how it will
+eventually drop into a Mac app. Wiring it up cost me an afternoon and one ugly
+gotcha: a version skew between the Rust toolchain and cbindgen produced a valid
+header with none of the functions in it. A one-line version bump fixed it. I only
+noticed because the generated file was blank where it should have declared three
+exported functions, the kind of failure that passes every test right up until
+someone tries to use the thing.
 
-**New formats are a one-line change, not a rewrite.** The audio library already
-handles the common formats; I added a few more (mp3, aac, and the kind of audio
-inside mp4 files) for the compressed files the catalog takes in. Adding another
-later is one line in a config file, not a new decoder.
+**New formats are a config line, not a rewrite.** symphonia already handles the
+common formats; I enabled a few more, mp3, aac, and the AAC stream inside mp4
+containers, for the compressed files the catalog ingests. The next one is a line in
+a feature list, not a hand-written decoder.
 
-**Running it over a whole folder is where the careful work lives.** Pointed at a
-folder, it scans everything and prints one line of data per file, working on many
-files at once for speed. Three decisions mattered. Each file is walled off, so one
-corrupt recording in a run of two thousand becomes a single error row instead of
-crashing the whole run. The data output stays identical no matter how many files
-run in parallel, so progress messages go to a separate channel and never mix into
-the data. And a gentle timeout, checked between chunks, lets a stuck file give up
-at a deadline instead of hanging the entire run, while genuinely long recordings
-are never cut off unless you ask for a limit.
+**Folder mode is where the real care lives.** Pointed at a directory, Audioscan
+walks it and prints one data line per file, processing several at a time. Three
+decisions earned their keep. Each file runs walled off, so one corrupt recording in
+a batch of two thousand becomes a single error row rather than a crashed run. The
+data stream stays byte-identical regardless of parallelism, because progress
+messages go to stderr and never bleed into stdout. And a soft timeout, checked
+between decode chunks, lets a wedged file surrender at a deadline instead of hanging
+the batch, while a legitimately long recording is never truncated unless you set a
+limit.
 
 ## What it is, and isn't
 
-About a thousand lines of Rust, 27 tests across eight files (loudness checked
-against ffmpeg, real audio-file fixtures, the folder-scan isolation, the
-other-language bridge, the timeout, and bad-input handling), released under two
-permissive licenses.
+About a thousand lines of Rust. 27 tests across eight files: loudness checked
+against ffmpeg, real audio-file fixtures, folder-scan isolation, the cross-language
+bridge, the timeout, and bad-input handling. Released under two permissive
+licenses.
 
-It is standalone on purpose. It is not yet wired into the catalog it was built for,
-because swapping out a production system's measurement path is a separate, careful
-change, not something to slip in beside a brand-new tool. The "run a program, read
-its data" design is exactly what will make that swap clean when I do it. This is one
-person's tool for one job, done carefully, not a general-purpose media framework.
+It stands alone on purpose, and it is not yet wired into the catalog it was built
+for. Swapping a production system's measurement path is its own deliberate change,
+not something to bolt on beside a tool this new. The run-a-program-read-its-data
+shape is exactly what will keep that swap clean when I make it. This is one
+person's tool for one job, n=1, not a general-purpose media framework, and I will
+not pretend otherwise.
 
 ## The checkable numbers
 
-Clone it, build it, point it at a `.wav` file, and compare its output to ffmpeg's
-own loudness measurement. The validation table, the test audio files, and the
-folder-scan behavior are all in the repository, and the numbers above are the ones
-it actually prints. If they do not reproduce, that is a bug worth telling me about.
+Clone it, build it, point it at a `.wav`, and compare the output to ffmpeg's own
+loudness measurement. The validation table, the test signals, and the folder-scan
+behavior all live in the repository, and the numbers above are the ones it actually
+prints. If they do not reproduce on your machine, that is a bug, and I want to hear
+about it.
 
 ---
 
