@@ -1,16 +1,16 @@
 ---
-title: "audioscan: one decode pass instead of three ffmpeg shellouts"
+title: "Audioscan: one decode pass instead of three ffmpeg shellouts"
 date: 2026-06-12
 ---
 
-# audioscan: one decode pass instead of three ffmpeg shellouts
+# Audioscan: one decode pass instead of three ffmpeg shellouts
 
 <p class="dek">What writing my first real Rust tool taught me about audio, FFI, and trusting your own numbers.</p>
 
 <p class="meta">Kevin Madson · June 2026 · 5 min read</p>
 
 > **If someone forwarded this to you:** I build and operate agentic systems across multiple
-> coding LLMs, and audioscan is a small native tool that fell out of one of
+> coding LLMs, and Audioscan is a small native tool that fell out of one of
 > them. It decodes an audio file once and reports its format, EBU R128
 > loudness, and silence windows as JSON. It is also the first real thing I
 > wrote in Rust.
@@ -42,7 +42,7 @@ going to find a new way to fail.
 
 ## The fix: decode once, measure everything
 
-audioscan decodes each file a single time with
+Audioscan decodes each file a single time with
 [symphonia](https://github.com/pdeljanov/Symphonia), measures loudness with the
 real [ebur128](https://crates.io/crates/ebur128) library (the same algorithm
 ffmpeg's filter wraps), finds silence in that same pass, and prints structured
@@ -69,7 +69,7 @@ importing anything or parsing prose.
 You cannot claim "same numbers" without checking, so I did, against ffmpeg's own
 `ebur128` filter on generated signals:
 
-| signal | metric | audioscan | ffmpeg |
+| signal | metric | Audioscan | ffmpeg |
 | --- | --- | --- | --- |
 | 1 kHz at -3 dBFS, 6 s of silence | integrated | -6.26 LUFS | -6.3 LUFS |
 | | silence window | [6.0, 12.0] | built at 6 to 12 s |
@@ -88,7 +88,7 @@ table.
 
 I came to this from Python, JavaScript, and Swift, so a few things were new.
 
-**The C ABI was the surprising part.** audioscan builds as a library, a static
+**The C ABI was the surprising part.** Audioscan builds as a library, a static
 library, and a C dynamic library, with a [cbindgen](https://github.com/mozilla/cbindgen)-generated
 header exposing three functions: analyze a path to a JSON string, free that
 string, and report the version. The point is that a Swift app can call the same

@@ -1,4 +1,4 @@
-title: "audioscan: one decode pass instead of three ffmpeg shellouts"
+title: "Audioscan: one decode pass instead of three ffmpeg shellouts"
 description: A fast Rust CLI for EBU R128 loudness and silence detection in a single decode pass
 url: https://kiwimaddog2020.github.io
 baseurl: /audioscan
