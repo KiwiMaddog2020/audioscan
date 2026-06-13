@@ -9,8 +9,8 @@ date: 2026-06-12
 
 <p class="meta">Kevin Madson · June 2026 · 5 min read</p>
 
-> **If someone forwarded this to you:** I build and operate agentic systems on
-> Claude Code, and audioscan is a small native tool that fell out of one of
+> **If someone forwarded this to you:** I build and operate agentic systems across multiple
+> coding LLMs, and audioscan is a small native tool that fell out of one of
 > them. It decodes an audio file once and reports its format, EBU R128
 > loudness, and silence windows as JSON. It is also the first real thing I
 > wrote in Rust.
