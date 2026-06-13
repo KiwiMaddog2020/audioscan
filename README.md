@@ -5,13 +5,18 @@ windows as JSON. One fast native pass instead of two or three `ffmpeg` shellouts
 
 ## Why
 
-`endenza-bootleg` measures loudness and finds silence by spawning `ffmpeg` and
-scraping its stderr text (see `loudness.py`, `silencedetect.py`). That fully
-decodes the file once per measurement and is fragile: it already cost a real bug,
-reading ffmpeg's first per-frame `I: -70` line instead of the Summary block.
-`audioscan` decodes each file a single time with `symphonia`, measures loudness
-with the real `ebur128` library, finds silence in the same pass, and prints
-structured JSON. Same numbers, fewer decodes, nothing to regex.
+I mix and master music, and a private catalog of mine needs two boring things
+from every recording: how loud it is (so tracks sit at a consistent volume) and
+where the silent gaps are (so it can split a long recording into songs). The
+first version got both by running `ffmpeg`, the standard audio command-line tool,
+and reading the numbers out of its status text. That fully decodes the file once
+per measurement and is fragile: it already cost a real bug, reading ffmpeg's first
+per-frame `I: -70` line instead of the final Summary block, storing a loudness off
+by tens of decibels. `audioscan` decodes each file a single time with `symphonia`,
+measures loudness with the real `ebur128` library (the same math ffmpeg uses, on
+the EBU R128 standard that streaming services use to keep volume consistent), finds
+silence in the same pass, and prints structured JSON. Same numbers, fewer decodes,
+nothing to scrape.
 
 ## Build
 
@@ -29,8 +34,8 @@ audioscan [--compact|--pretty] [--strict] [--timeout <s>] [--threshold <RMS-dBFS
 - `--compact` one-line JSON
 - `--strict` fail instead of returning `status: "partial"` when decode is incomplete
 - `--timeout` per-file soft decode deadline in seconds (default: none / unbounded)
-- `--threshold` silence threshold in RMS dBFS (default -30, Bootleg's tuned value)
-- `--min-gap` shortest silence to report, in seconds (default 5.0, Bootleg's value)
+- `--threshold` silence threshold in RMS dBFS (default -30)
+- `--min-gap` shortest silence to report, in seconds (default 5.0)
 
 `--timeout <secs>` bounds how long a single file may spend decoding. It is a
 cooperative soft deadline checked between packets, so a slow or wedged file
@@ -120,15 +125,13 @@ extensionless path.
 
 `integrated_lufs` and `loudness_range_lu` are `null` together when the input is
 too short or quiet to measure. `true_peak_dbtp` is `null` only for digital
-silence, where there is no inter-sample peak to report. `silences` uses the same
-`[start, end]` seconds convention Bootleg's `segments_from_silences` already
-consumes. Silence boundaries are quantized to the roughly 30 ms analysis window,
+silence, where there is no inter-sample peak to report. `silences` uses a simple
+`[start, end]` seconds convention. Silence boundaries are quantized to the roughly 30 ms analysis window,
 matching ffmpeg `silencedetect`.
 
 ## Validation
 
-Checked against ffmpeg's `ebur128` filter (Bootleg's current ground truth) on
-generated signals:
+Checked against ffmpeg's `ebur128` filter on generated signals:
 
 | signal | metric | audioscan | ffmpeg |
 |---|---|---|---|
@@ -158,12 +161,11 @@ Enabled: wav, flac, mp3, aac/m4a, ogg/vorbis, adpcm, mkv (symphonia defaults plu
 
 ## Status and next steps
 
-Standalone by design, intentionally not wired into Bootleg. Bootleg's V2 pipeline
-is a locked design (`~/.claude/orchestrator/docs/BOOTLEG_DESIGN_2026-05-25.md`);
-swapping its ffmpeg-shell loudness/silence paths for an `audioscan` subprocess is
-a separate, gated change. Because the contract is "run a binary, read JSON," it
-fits Bootleg's "JSON adapters only, never Python imports" boundary cleanly.
+Standalone by design, intentionally not yet wired into the catalog it was built
+for. Swapping a production pipeline's measurement path for an `audioscan`
+subprocess is a separate, careful change. Because the contract is "run a binary,
+read JSON," that swap stays clean when I make it.
 
 Candidate directions:
-- a C ABI so `veranota` (Swift) can call the same core
+- a C interface so a Swift app can call the same core directly, with no subprocess
 - bump `symphonia` to 0.6
