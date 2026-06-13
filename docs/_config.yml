@@ -1,0 +1,14 @@
+title: "audioscan: one decode pass instead of three ffmpeg shellouts"
+description: A fast Rust CLI for EBU R128 loudness and silence detection in a single decode pass
+url: https://kiwimaddog2020.github.io
+baseurl: /audioscan
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-default-layout
+  - jekyll-titles-from-headings
+  - jekyll-sitemap
+# Keep the internal polish reports out of the published note.
+exclude:
+  - "POLISH_2026-06-03_audioscan.md"
+  - "POLISH_2026-06-03_audioscan_postround.md"
+  - "POLISH_2026-06-03_audioscan_R4-R7.md"
