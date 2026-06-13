@@ -25,9 +25,10 @@ date: 2026-06-12
 
 ## The problem: scraping ffmpeg's stderr
 
-One of my projects is a private catalog for my band's recordings. It needs two
-boring things from every take: how loud it is, and where the silent gaps are, so
-it can split a long rehearsal tape into songs.
+I mix and master music, and one of my projects is a private catalog for the
+recordings I work on. It needs two boring things from every take: how loud it is,
+and where the silent gaps are, so it can split a long recording into separate
+songs.
 
 The first version got both by shelling out to ffmpeg and scraping its stderr
 text, once for loudness and once for silence detection. That has two problems.
