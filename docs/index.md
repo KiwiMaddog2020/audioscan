@@ -136,3 +136,7 @@ JSON against `ffmpeg -af ebur128`. The validation table, the codec fixtures, and
 the batch behavior are all in the repository, and the numbers above are the ones
 it actually prints. If they do not reproduce, that is a bug worth telling me
 about.
+
+---
+
+<p class="byline"><em>I build agentic systems across multiple coding LLMs. More of my research notes are <a href="/">here</a>.</em></p>
