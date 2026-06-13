@@ -123,12 +123,15 @@ against ffmpeg, real audio-file fixtures, folder-scan isolation, the cross-langu
 bridge, the timeout, and bad-input handling. Released under two permissive
 licenses.
 
-It stands alone on purpose, and it is not yet wired into the catalog it was built
-for. Swapping a production system's measurement path is its own deliberate change,
-not something to bolt on beside a tool this new. The run-a-program-read-its-data
-shape is exactly what will keep that swap clean when I make it. This is one
-person's tool for one job, n=1, not a general-purpose media framework, and I will
-not pretend otherwise.
+It was built to stand alone, and it is no longer standing alone: the catalog now
+runs its loudness measurement through audioscan in production, and reaches for the
+same one-pass engine to split a long session at its silences. Swapping a
+production system's measurement path is a deliberate change, not something to bolt
+on beside a brand-new tool, so I held off until the numbers had been checked
+against ffmpeg. When I finally made the swap it landed as quietly as the
+run-a-program-read-its-data shape promised it would, which was the whole reason
+for building it that way. This is one person's tool for one job, n=1, not a
+general-purpose media framework, and I will not pretend otherwise.
 
 ## The checkable numbers
 
