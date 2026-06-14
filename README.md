@@ -18,6 +18,17 @@ the EBU R128 standard that streaming services use to keep volume consistent), fi
 silence in the same pass, and prints structured JSON. Same numbers, fewer decodes,
 nothing to scrape.
 
+## Install
+
+```bash
+cargo install audioscan
+```
+
+That installs the `audioscan` binary from crates.io. To install the latest from
+source without cloning, use `cargo install --git https://github.com/KiwiMaddog2020/audioscan`.
+Prebuilt macOS and Linux binaries are attached to each
+[release](https://github.com/KiwiMaddog2020/audioscan/releases).
+
 ## Build
 
 ```bash

@@ -1,0 +1,37 @@
+name: Release
+
+# On a version tag (v*), build native binaries for macOS (arm64 + x86_64) and
+# Linux, and attach them to the GitHub release so non-Rust users can download a
+# prebuilt audioscan instead of compiling.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: macos-latest
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release --bin audioscan
+      - name: Package
+        run: tar -C target/release -czf audioscan-${{ matrix.name }}.tar.gz audioscan
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: audioscan-${{ matrix.name }}.tar.gz
