@@ -18,7 +18,6 @@ date: 2026-06-12
 
 <p class="contact-card">
 <a href="https://github.com/KiwiMaddog2020/audioscan">github.com/KiwiMaddog2020/audioscan</a>
-<span class="sep">·</span>
 <a href="mailto:kevinmadson@protonmail.com">kevinmadson@protonmail.com</a> <!-- pragma: allowlist -->
 </p>
 
