@@ -390,7 +390,10 @@ fn collect_audio_files(dir: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            // Entry type does NOT follow symlinks, so a symlinked directory
+            // can't cause an unbounded loop or escape the requested root.
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
                 stack.push(p);
             } else if let Some(ext) = p.extension().and_then(|e| e.to_str())
                 && AUDIO_EXTS.contains(&ext.to_lowercase().as_str())
