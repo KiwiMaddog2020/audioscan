@@ -32,6 +32,6 @@ jobs:
       - name: Package
         run: tar -C target/release -czf audioscan-${{ matrix.name }}.tar.gz audioscan
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           files: audioscan-${{ matrix.name }}.tar.gz
